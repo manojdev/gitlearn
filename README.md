@@ -1,56 +1,104 @@
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
-import java.io.IOException;
-import java.util.Arrays;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
 
 public class NotificationHttpCommunicatorTest {
-    private MockWebServer server;
+    @Mock
     private NotificationHttpCommunicator communicator;
 
+    @Mock
+    private EventRepository eventRepository;
+
+    @Mock
+    private JobRepository jobRepository;
+
     @BeforeEach
-    public void setup() throws IOException {
-        server = new MockWebServer();
-        server.start();
-
-        WebClient.Builder webClientBuilder = WebClient.builder()
-                .baseUrl(server.url("/").toString());
-
-        WebClient client = webClientBuilder.build();
-        URIBuilder uriBuilder = new URIBuilder();
-
-        communicator = new NotificationHttpCommunicator(client, uriBuilder);
-    }
-
-    @AfterEach
-    public void tearDown() throws IOException {
-        server.shutdown();
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testGetEvents() throws InterruptedException {
-        // Enqueue a mock response from the server
-        List<EventDTO> eventDtoList = Arrays.asList(new EventDTO(), new EventDTO());
-        server.enqueue(new MockResponse()
-                .setBody(JsonUtils.toJson(eventDtoList)));
+    public void testPostEvents_Success() {
+        // Create test data
+        String topic = "topic";
+        Event eventObject = new Event();
+        EventRequestDTO eventRequest = new EventRequestDTO();
+        eventRequest.setData(eventObject.getData());
+
+        // Mock the response
+        ResponseEntity<ApiEvent> response = new ResponseEntity<>(HttpStatus.OK);
+        when(communicator.postEvents(eventRequest, topic)).thenReturn(response);
 
         // Call the method under test
-        List<EventDTO> result = communicator.getEvents("start", "end");
+        communicator.postevents(topic, eventObject);
 
-        // Verify the request sent to the server
-        RecordedRequest recordedRequest = server.takeRequest();
-        assertEquals("/events?start=start&end=end", recordedRequest.getPath());
+        // Verify the interactions
+        verify(eventRepository, times(1)).delete(eventObject);
+    }
 
-        // Verify the result
-        assertEquals(eventDtoList, result);
+    @Test
+    public void testPostEvents_TopicNotFound() {
+        // Create test data
+        String topic = "topic";
+        Event eventObject = new Event();
+        EventRequestDTO eventRequest = new EventRequestDTO();
+        eventRequest.setData(eventObject.getData());
+
+        // Mock the response
+        ResponseEntity<ApiEvent> response = new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        when(communicator.postEvents(eventRequest, topic)).thenReturn(response);
+
+        // Call the method under test
+        communicator.postevents(topic, eventObject);
+
+        // Verify the interactions
+        verifyNoInteractions(eventRepository);
+    }
+
+    @Test
+    public void testUpdateLastRun_JobListNotEmpty() {
+        // Create test data
+        LocalDateTime start = LocalDateTime.now();
+        LocalDateTime end = LocalDateTime.now();
+        List<Job> jobList = new ArrayList<>();
+        jobList.add(new Job());
+
+        // Mock the job repository
+        when(jobRepository.findAll()).thenReturn(jobList);
+        doNothing().when(jobRepository).save(any(Job.class));
+
+        // Call the method under test
+        communicator.updateLastRun(start, end);
+
+        // Verify the interactions
+        verifyNoMoreInteractions(jobRepository);
+    }
+
+    @Test
+    public void testUpdateLastRun_JobListEmpty() {
+        // Create test data
+        LocalDateTime start = LocalDateTime.now();
+        LocalDateTime end = LocalDateTime.now();
+        List<Job> jobList = new ArrayList<>();
+
+        // Mock the job repository
+        when(jobRepository.findAll()).thenReturn(jobList);
+        doNothing().when(jobRepository).save(any(Job.class));
+
+        // Call the method under test
+        communicator.updateLastRun(start, end);
+
+        // Verify the interactions
+        verify(jobRepository, times(1)).save(any(Job.class));
     }
 }
