@@ -2,103 +2,99 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
-public class NotificationHttpCommunicatorTest {
-    @Mock
-    private NotificationHttpCommunicator communicator;
-
+class YourTestClass {
     @Mock
     private EventRepository eventRepository;
 
     @Mock
-    private JobRepository jobRepository;
+    private NotificationHttpCommunicator notificationHttpCommunicator;
+
+    private Map<String, List<String>> topicCache;
+
+    private YourClass yourClass;
 
     @BeforeEach
-    public void setup() {
+    void setUp() {
         MockitoAnnotations.openMocks(this);
+        topicCache = new HashMap<>();
+        yourClass = new YourClass(eventRepository, notificationHttpCommunicator, topicCache);
     }
 
     @Test
-    public void testPostEvents_Success() {
-        // Create test data
-        String topic = "topic";
-        Event eventObject = new Event();
-        EventRequestDTO eventRequest = new EventRequestDTO();
-        eventRequest.setData(eventObject.getData());
+    void testProcessAliNotifications_withTopicInCache() {
+        // Arrange
+        List<Event> fetchedEvents = new ArrayList<>();
+        Event eventObject = new Event("eventName", "domain", "environment");
+        fetchedEvents.add(eventObject);
+        List<String> topicIds = new ArrayList<>();
+        topicIds.add("topicId");
+        topicCache.put("eventName_domain-environment", topicIds);
 
-        // Mock the response
-        ResponseEntity<ApiEvent> response = new ResponseEntity<>(HttpStatus.OK);
-        when(communicator.postEvents(eventRequest, topic)).thenReturn(response);
+        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
 
-        // Call the method under test
-        communicator.postevents(topic, eventObject);
+        // Act
+        yourClass.processAliNotifications();
 
-        // Verify the interactions
-        verify(eventRepository, times(1)).delete(eventObject);
+        // Assert
+        verify(notificationHttpCommunicator, never()).findTopic(any(Event.class));
+        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
     }
 
     @Test
-    public void testPostEvents_TopicNotFound() {
-        // Create test data
-        String topic = "topic";
-        Event eventObject = new Event();
-        EventRequestDTO eventRequest = new EventRequestDTO();
-        eventRequest.setData(eventObject.getData());
+    void testProcessAliNotifications_withTopicNotInCache() {
+        // Arrange
+        List<Event> fetchedEvents = new ArrayList<>();
+        Event eventObject = new Event("eventName", "domain", "environment");
+        fetchedEvents.add(eventObject);
+        List<ApiTopic> topicList = new ArrayList<>();
+        ApiTopic topic = new ApiTopic("topicName", "domain", "environment");
+        topicList.add(topic);
+        List<String> topicIds = new ArrayList<>();
+        topicIds.add("topicId");
 
-        // Mock the response
-        ResponseEntity<ApiEvent> response = new ResponseEntity<>(HttpStatus.NOT_FOUND);
-        when(communicator.postEvents(eventRequest, topic)).thenReturn(response);
+        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
+        when(notificationHttpCommunicator.findTopic(eventObject)).thenReturn(topicList);
+        when(notificationHttpCommunicator.publishEvents(anyString(), any(Event.class))).thenReturn(true);
 
-        // Call the method under test
-        communicator.postevents(topic, eventObject);
+        // Act
+        yourClass.processAliNotifications();
 
-        // Verify the interactions
-        verifyNoInteractions(eventRepository);
+        // Assert
+        verify(notificationHttpCommunicator, times(1)).findTopic(eventObject);
+        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
     }
 
     @Test
-    public void testUpdateLastRun_JobListNotEmpty() {
-        // Create test data
-        LocalDateTime start = LocalDateTime.now();
-        LocalDateTime end = LocalDateTime.now();
-        List<Job> jobList = new ArrayList<>();
-        jobList.add(new Job());
+    void testProcessAliNotifications_withMaxCacheSize() {
+        // Arrange
+        List<Event> fetchedEvents = new ArrayList<>();
+        Event eventObject = new Event("eventName", "domain", "environment");
+        fetchedEvents.add(eventObject);
+        List<ApiTopic> topicList = new ArrayList<>();
+        ApiTopic topic = new ApiTopic("topicName", "domain", "environment");
+        topicList.add(topic);
+        List<String> topicIds = new ArrayList<>();
+        topicIds.add("topicId");
 
-        // Mock the job repository
-        when(jobRepository.findAll()).thenReturn(jobList);
-        doNothing().when(jobRepository).save(any(Job.class));
+        for (int i = 0; i < 1000; i++) {
+            topicCache.put("key" + i, Collections.singletonList("value" + i));
+        }
 
-        // Call the method under test
-        communicator.updateLastRun(start, end);
+        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
+        when(notificationHttpCommunicator.findTopic(eventObject)).thenReturn(topicList);
+        when(notificationHttpCommunicator.publishEvents(anyString(), any(Event.class))).thenReturn(true);
 
-        // Verify the interactions
-        verifyNoMoreInteractions(jobRepository);
-    }
+        // Act
+        yourClass.processAliNotifications();
 
-    @Test
-    public void testUpdateLastRun_JobListEmpty() {
-        // Create test data
-        LocalDateTime start = LocalDateTime.now();
-        LocalDateTime end = LocalDateTime.now();
-        List<Job> jobList = new ArrayList<>();
+        // Assert
+        verify(notificationHttpCommunicator, times(1)).findTopic(eventObject);
+        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
 
-        // Mock the job repository
-        when(jobRepository.findAll()).thenReturn(jobList);
-        doNothing().when(jobRepository).save(any(Job.class));
-
-        // Call the method under test
-        communicator.updateLastRun(start, end);
-
-        // Verify the interactions
-        verify(jobRepository, times(1)).save(any(Job.class));
-    }
-}
+        // Additional assertions for cache size
+        int expectedCacheSize = 1000 - 200 + 1;
