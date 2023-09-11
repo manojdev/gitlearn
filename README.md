@@ -1,100 +1,48 @@
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Mockito;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.util.*;
+class WebSocketServiceTest {
 
-import static org.mockito.Mockito.*;
-
-class YourTestClass {
-    @Mock
-    private EventRepository eventRepository;
-
-    @Mock
-    private NotificationHttpCommunicator notificationHttpCommunicator;
-
-    private Map<String, List<String>> topicCache;
-
-    private YourClass yourClass;
+    private WebSocketService webSocketService;
+    private SimpMessagingTemplate messagingTemplate;
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
-        topicCache = new HashMap<>();
-        yourClass = new YourClass(eventRepository, notificationHttpCommunicator, topicCache);
+        messagingTemplate = Mockito.mock(SimpMessagingTemplate.class);
+        webSocketService = new WebSocketService(messagingTemplate);
     }
 
     @Test
-    void testProcessAliNotifications_withTopicInCache() {
-        // Arrange
-        List<Event> fetchedEvents = new ArrayList<>();
-        Event eventObject = new Event("eventName", "domain", "environment");
-        fetchedEvents.add(eventObject);
-        List<String> topicIds = new ArrayList<>();
-        topicIds.add("topicId");
-        topicCache.put("eventName_domain-environment", topicIds);
+    void pushNotification_UserNotification_Success() {
+        Long userId = 123L;
+        UserNotification userNotification = new UserNotification();
+        // Set up any required data in userNotification
 
-        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
+        webSocketService.pushNotification(userId, userNotification);
 
-        // Act
-        yourClass.processAliNotifications();
-
-        // Assert
-        verify(notificationHttpCommunicator, never()).findTopic(any(Event.class));
-        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
+        // Verify that messagingTemplate.convertAndSendToUser was called with the expected arguments
+        Mockito.verify(messagingTemplate).convertAndSendToUser(
+            Mockito.eq(userId.toString()),
+            Mockito.eq("/Live/notifications"),
+            Mockito.eq(userNotification)
+        );
     }
 
     @Test
-    void testProcessAliNotifications_withTopicNotInCache() {
-        // Arrange
-        List<Event> fetchedEvents = new ArrayList<>();
-        Event eventObject = new Event("eventName", "domain", "environment");
-        fetchedEvents.add(eventObject);
-        List<ApiTopic> topicList = new ArrayList<>();
-        ApiTopic topic = new ApiTopic("topicName", "domain", "environment");
-        topicList.add(topic);
-        List<String> topicIds = new ArrayList<>();
-        topicIds.add("topicId");
+    void pushNotification_UserNotificationEntity_Success() {
+        Long userId = 123L;
+        UserNotificationEntity userNotificationEntity = new UserNotificationEntity();
+        // Set up any required data in userNotificationEntity
 
-        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
-        when(notificationHttpCommunicator.findTopic(eventObject)).thenReturn(topicList);
-        when(notificationHttpCommunicator.publishEvents(anyString(), any(Event.class))).thenReturn(true);
+        webSocketService.pushNotification(userId, userNotificationEntity);
 
-        // Act
-        yourClass.processAliNotifications();
-
-        // Assert
-        verify(notificationHttpCommunicator, times(1)).findTopic(eventObject);
-        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
+        // Verify that messagingTemplate.convertAndSendToUser was called with the expected arguments
+        Mockito.verify(messagingTemplate).convertAndSendToUser(
+            Mockito.eq(userId.toString()),
+            Mockito.eq("/Live/notifications"),
+            Mockito.any(UserNotification.class) // You can also verify that the correct UserNotification is sent
+        );
     }
-
-    @Test
-    void testProcessAliNotifications_withMaxCacheSize() {
-        // Arrange
-        List<Event> fetchedEvents = new ArrayList<>();
-        Event eventObject = new Event("eventName", "domain", "environment");
-        fetchedEvents.add(eventObject);
-        List<ApiTopic> topicList = new ArrayList<>();
-        ApiTopic topic = new ApiTopic("topicName", "domain", "environment");
-        topicList.add(topic);
-        List<String> topicIds = new ArrayList<>();
-        topicIds.add("topicId");
-
-        for (int i = 0; i < 1000; i++) {
-            topicCache.put("key" + i, Collections.singletonList("value" + i));
-        }
-
-        when(eventRepository.findAr10()).thenReturn(fetchedEvents);
-        when(notificationHttpCommunicator.findTopic(eventObject)).thenReturn(topicList);
-        when(notificationHttpCommunicator.publishEvents(anyString(), any(Event.class))).thenReturn(true);
-
-        // Act
-        yourClass.processAliNotifications();
-
-        // Assert
-        verify(notificationHttpCommunicator, times(1)).findTopic(eventObject);
-        verify(notificationHttpCommunicator, times(1)).publishEvents("topicId", eventObject);
-
-        // Additional assertions for cache size
-        int expectedCacheSize = 1000 - 200 + 1;
+}
