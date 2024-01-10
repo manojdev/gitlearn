@@ -88,26 +88,52 @@ public class TrinoJdbcParquetWriter {
 
     private static MessageType buildParquetSchema(ResultSet resultSet) throws SQLException {
         Types.MessageTypeBuilder builder = Types.buildMessage();
+
         ResultSetMetaData metaData = resultSet.getMetaData();
         int columnCount = metaData.getColumnCount();
 
         for (int i = 1; i <= columnCount; i++) {
             String columnName = metaData.getColumnName(i);
-            String columnType = metaData.getColumnTypeName(i);
+            int columnType = metaData.getColumnType(i);
 
-            switch (columnType.toLowerCase()) {
-                case "int":
-                    builder.optional().int32(columnName).named(columnName);
+            switch (columnType) {
+                case Types.INTEGER:
+                    builder = builder.optional(INT32).named(columnName);
                     break;
-                case "bigint":
-                    builder.optional().int64(columnName).named(columnName);
+                case Types.BIGINT:
+                    builder = builder.optional(INT64).named(columnName);
                     break;
-                case "boolean":
-                    builder.optional().booleanType(columnName).named(columnName);
+                case Types.BOOLEAN:
+                    builder = builder.optional(BOOLEAN).named(columnName);
                     break;
-                // Handle other data types as needed
+                case Types.FLOAT:
+                case Types.REAL:
+                    builder = builder.optional(FLOAT).named(columnName);
+                    break;
+                case Types.DOUBLE:
+                    builder = builder.optional(DOUBLE).named(columnName);
+                    break;
+                case Types.NUMERIC:
+                case Types.DECIMAL:
+                    builder = builder.optional(BINARY).as(OriginalType.DECIMAL).precision(38).scale(18).named(columnName); // Example for handling NUMERIC/DECIMAL
+                    break;
+                case Types.CHAR:
+                case Types.VARCHAR:
+                case Types.LONGVARCHAR:
+                    builder = builder.optional(BINARY).as(OriginalType.UTF8).named(columnName);
+                    break;
+                case Types.DATE:
+                    builder = builder.optional(INT32).as(OriginalType.DATE).named(columnName);
+                    break;
+                case Types.TIME:
+                    builder = builder.optional(INT64).as(OriginalType.TIME_MICROS).named(columnName);
+                    break;
+                case Types.TIMESTAMP:
+                    builder = builder.optional(INT64).as(OriginalType.TIMESTAMP_MICROS).named(columnName);
+                    break;
+                // Add handling for other data types as needed
                 default:
-                    builder.optional().binary(columnName).as(OriginalType.UTF8).named(columnName);
+                    builder = builder.optional(BINARY).named(columnName);
                     break;
             }
         }
