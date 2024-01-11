@@ -140,31 +140,58 @@ public class TrinoJdbcParquetWriter {
         return builder.named("result");
     }
 
-    private static Group resultSetToGroup(ResultSet resultSet, SimpleGroupFactory groupFactory) throws SQLException {
+  private static Group resultSetToGroup(ResultSet resultSet, SimpleGroupFactory groupFactory) throws SQLException {
         ResultSetMetaData metaData = resultSet.getMetaData();
         int columnCount = metaData.getColumnCount();
         Group group = groupFactory.newGroup();
 
         for (int i = 1; i <= columnCount; i++) {
             String columnName = metaData.getColumnName(i);
-            String columnType = metaData.getColumnTypeName(i);
+            int columnType = metaData.getColumnType(i);
 
-            switch (columnType.toLowerCase()) {
-                case "int":
+            switch (columnType) {
+                case java.sql.Types.INTEGER:
                     group.append(columnName, resultSet.getInt(i));
                     break;
-                case "bigint":
+                case java.sql.Types.BIGINT:
                     group.append(columnName, resultSet.getLong(i));
                     break;
-                case "boolean":
+                case java.sql.Types.BOOLEAN:
                     group.append(columnName, resultSet.getBoolean(i));
+                    break;
+                case java.sql.Types.FLOAT:
+                case java.sql.Types.REAL:
+                    group.append(columnName, resultSet.getFloat(i));
+                    break;
+                case java.sql.Types.DOUBLE:
+                    group.append(columnName, resultSet.getDouble(i));
+                    break;
+                case java.sql.Types.NUMERIC:
+                case java.sql.Types.DECIMAL:
+                    // Assuming a fixed-length byte array for NUMERIC/DECIMAL
+                    group.append(columnName, resultSet.getBigDecimal(i).toString().getBytes());
+                    break;
+                case java.sql.Types.CHAR:
+                case java.sql.Types.VARCHAR:
+                case java.sql.Types.LONGVARCHAR:
+                    group.append(columnName, resultSet.getString(i));
+                    break;
+                case java.sql.Types.DATE:
+                    group.append(columnName, resultSet.getDate(i).toLocalDate().toEpochDay());
+                    break;
+                case java.sql.Types.TIME:
+                    group.append(columnName, resultSet.getTime(i).toLocalTime().toNanoOfDay() / 1000);
+                    break;
+                case java.sql.Types.TIMESTAMP:
+                    group.append(columnName, resultSet.getTimestamp(i).toInstant().toEpochMilli() * 1000);
                     break;
                 // Handle other data types as needed
                 default:
-                    group.append(columnName, resultSet.getString(i));
+                    // For unsupported types, you might want to log a warning or handle them accordingly
                     break;
             }
         }
         return group;
     }
+
 }
