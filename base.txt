@@ -1,197 +1,62 @@
-import java.io.File;
-import java.io.IOException;
-import java.sql.*;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.hadoop.ParquetWriter;
-import org.apache.parquet.hadoop.example.GroupWriteSupport;
-import org.apache.parquet.example.data.Group;
-import org.apache.parquet.example.data.simple.SimpleGroupFactory;
-import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.MessageTypeParser;
-import org.apache.parquet.schema.Types;
-import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import java.io.FileWriter;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import org.apache.parquet.schema.Schema;
+import org.apache.parquet.schema.SchemaReporter;
+import org.apache.parquet.schema.TypeConverter;
 
-public class TrinoJdbcParquetWriter {
-
-    private static final String CONNECTION_URL = "jdbc:trino://trino-host:port/";
-    private static final String USERNAME = "your_username";
-    private static final String PASSWORD = "your_password";
-
-    public static void main(String[] args) {
-        Connection connection = null;
-        try {
-            // Establish connection to Trino
-            connection = DriverManager.getConnection(CONNECTION_URL, USERNAME, PASSWORD);
-
-            // Execute the query
-            String query = "SELECT * FROM your_table";
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(query);
-
-            // Retrieve metadata - column names and types
-            ResultSetMetaData metaData = resultSet.getMetaData();
-            int columnCount = metaData.getColumnCount();
-            for (int i = 1; i <= columnCount; i++) {
-                String columnName = metaData.getColumnName(i);
-                String columnType = metaData.getColumnTypeName(i);
-                System.out.println("Column Name: " + columnName + ", Column Type: " + columnType);
-            }
-
-            // Write query results to Parquet file
-            writeResultSetToParquet(resultSet, "query_results.parquet");
-
-        } catch (SQLException | IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (connection != null) {
-                try {
-                    connection.close();
-                } catch (SQLException e) {
-                    e.printStackTrace();
+public class TrinoToParquet {
+    
+    public static void main(String[] args) throws Exception {
+        // Connect to Trino via JDBC
+        String url = "jdbc:trino://localhost:8080/testdb";
+        String user = "root";
+        String password = "password";
+        Connection conn = DriverManager.getConnection(url, user, password);
+        
+        // Execute query and read result set
+        Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT column_name, data_type FROM information_schema.columns WHERE table_name='test_table'");
+        SchemaReporter schemaReporter = new SchemaReporter(TypeConverter.defaultSchema());
+        
+        // Identify column names and types for Parquet file schema
+        List<SchemaField> schemaFields = new ArrayList<>();
+        while (rs.next()) {
+            String columnName = rs.getString("column_name");
+            String dataType = rs.getString("data_type");
+            schemaFields.add(new SchemaField(columnName, TypeConverter.getSchema().getDataType(dataType)));
+        }
+        
+        // Create Parquet file schema using identified column names and types
+        Schema schema = new Schema(schemaReporter.toSchema(schemaFields));
+        
+        // Write query results to Parquet file
+        String parquetFile = "/path/to/parquet/file";
+        FileWriter writer = new FileWriter(parquetFile);
+        try (ParquetWriter writer = new ParquetWriter(writer, schema, true)) {
+            while (rs.next()) {
+                Object[] row = new Object[schemaFields.size()];
+                for (int i = 0; i < schemaFields.size(); i++) {
+                    row[i] = rs.getObject(i + 1);
                 }
+                writer.writeRow(row);
             }
         }
+        
+        // Write Parquet file to S3 bucket location using AWS SDK
+        BasicAWSCredentials awsCreds = new BasicAWSCredentials("ACCESS_KEY", "SECRET_KEY");
+        AmazonS3 s3Client = AmazonS3ClientBuilder.defaultClient()
+                .withCredentials(new AWSStaticCredentialsProvider(awsCreds));
+        
+        PutObjectRequest putObjectRequest = new PutObjectRequest("/path/to/s3/bucket/folder", "/parquet/file.parquet", parquetFile);
+        s3Client.putObject(putObjectRequest);
     }
-
-    private static void writeResultSetToParquet(ResultSet resultSet, String outputPath) throws IOException, SQLException {
-        MessageType schema = buildParquetSchema(resultSet);
-        SimpleGroupFactory groupFactory = new SimpleGroupFactory(schema);
-        File file = new File(outputPath);
-
-        Configuration conf = new Configuration();
-        GroupWriteSupport.setSchema(schema, conf);
-
-        ParquetWriter<Group> writer = new ParquetWriter<>(
-                new Path(file.getPath()),
-                new GroupWriteSupport(),
-                CompressionCodecName.SNAPPY,
-                1024,
-                1024,
-                512,
-                true,
-                false,
-                ParquetWriter.Mode.CREATE,
-                conf
-        );
-
-        try {
-            while (resultSet.next()) {
-                Group group = resultSetToGroup(resultSet, groupFactory);
-                writer.write(group);
-            }
-        } finally {
-            writer.close();
-            System.out.println("Parquet file written successfully.");
-        }
-    }
-
-    private static MessageType buildParquetSchema(ResultSet resultSet) throws SQLException {
-        Types.MessageTypeBuilder builder = Types.buildMessage();
-
-        ResultSetMetaData metaData = resultSet.getMetaData();
-        int columnCount = metaData.getColumnCount();
-
-        for (int i = 1; i <= columnCount; i++) {
-            String columnName = metaData.getColumnName(i);
-            int columnType = metaData.getColumnType(i);
-
-            switch (columnType) {
-                case Types.INTEGER:
-                    builder = builder.optional(INT32).named(columnName);
-                    break;
-                case Types.BIGINT:
-                    builder = builder.optional(INT64).named(columnName);
-                    break;
-                case Types.BOOLEAN:
-                    builder = builder.optional(BOOLEAN).named(columnName);
-                    break;
-                case Types.FLOAT:
-                case Types.REAL:
-                    builder = builder.optional(FLOAT).named(columnName);
-                    break;
-                case Types.DOUBLE:
-                    builder = builder.optional(DOUBLE).named(columnName);
-                    break;
-                case Types.NUMERIC:
-                case Types.DECIMAL:
-                    builder = builder.optional(BINARY).as(OriginalType.DECIMAL).precision(38).scale(18).named(columnName); // Example for handling NUMERIC/DECIMAL
-                    break;
-                case Types.CHAR:
-                case Types.VARCHAR:
-                case Types.LONGVARCHAR:
-                    builder = builder.optional(BINARY).as(OriginalType.UTF8).named(columnName);
-                    break;
-                case Types.DATE:
-                    builder = builder.optional(INT32).as(OriginalType.DATE).named(columnName);
-                    break;
-                case Types.TIME:
-                    builder = builder.optional(INT64).as(OriginalType.TIME_MICROS).named(columnName);
-                    break;
-                case Types.TIMESTAMP:
-                    builder = builder.optional(INT64).as(OriginalType.TIMESTAMP_MICROS).named(columnName);
-                    break;
-                // Add handling for other data types as needed
-                default:
-                    builder = builder.optional(BINARY).named(columnName);
-                    break;
-            }
-        }
-        return builder.named("result");
-    }
-
-  private static Group resultSetToGroup(ResultSet resultSet, SimpleGroupFactory groupFactory) throws SQLException {
-        ResultSetMetaData metaData = resultSet.getMetaData();
-        int columnCount = metaData.getColumnCount();
-        Group group = groupFactory.newGroup();
-
-        for (int i = 1; i <= columnCount; i++) {
-            String columnName = metaData.getColumnName(i);
-            int columnType = metaData.getColumnType(i);
-
-            switch (columnType) {
-                case java.sql.Types.INTEGER:
-                    group.append(columnName, resultSet.getInt(i));
-                    break;
-                case java.sql.Types.BIGINT:
-                    group.append(columnName, resultSet.getLong(i));
-                    break;
-                case java.sql.Types.BOOLEAN:
-                    group.append(columnName, resultSet.getBoolean(i));
-                    break;
-                case java.sql.Types.FLOAT:
-                case java.sql.Types.REAL:
-                    group.append(columnName, resultSet.getFloat(i));
-                    break;
-                case java.sql.Types.DOUBLE:
-                    group.append(columnName, resultSet.getDouble(i));
-                    break;
-                case java.sql.Types.NUMERIC:
-                case java.sql.Types.DECIMAL:
-                    // Assuming a fixed-length byte array for NUMERIC/DECIMAL
-                    group.append(columnName, resultSet.getBigDecimal(i).toString().getBytes());
-                    break;
-                case java.sql.Types.CHAR:
-                case java.sql.Types.VARCHAR:
-                case java.sql.Types.LONGVARCHAR:
-                    group.append(columnName, resultSet.getString(i));
-                    break;
-                case java.sql.Types.DATE:
-                    group.append(columnName, resultSet.getDate(i).toLocalDate().toEpochDay());
-                    break;
-                case java.sql.Types.TIME:
-                    group.append(columnName, resultSet.getTime(i).toLocalTime().toNanoOfDay() / 1000);
-                    break;
-                case java.sql.Types.TIMESTAMP:
-                    group.append(columnName, resultSet.getTimestamp(i).toInstant().toEpochMilli() * 1000);
-                    break;
-                // Handle other data types as needed
-                default:
-                    // For unsupported types, you might want to log a warning or handle them accordingly
-                    break;
-            }
-        }
-        return group;
-    }
-
+    
 }
