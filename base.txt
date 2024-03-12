@@ -1,62 +1,72 @@
-import java.io.FileWriter;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import org.apache.parquet.schema.Schema;
-import org.apache.parquet.schema.SchemaReporter;
-import org.apache.parquet.schema.TypeConverter;
+# Specify your desired AWS region
+provider "aws" {
+  region = "us-east-1"
+}
 
-public class TrinoToParquet {
-    
-    public static void main(String[] args) throws Exception {
-        // Connect to Trino via JDBC
-        String url = "jdbc:trino://localhost:8080/testdb";
-        String user = "root";
-        String password = "password";
-        Connection conn = DriverManager.getConnection(url, user, password);
-        
-        // Execute query and read result set
-        Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT column_name, data_type FROM information_schema.columns WHERE table_name='test_table'");
-        SchemaReporter schemaReporter = new SchemaReporter(TypeConverter.defaultSchema());
-        
-        // Identify column names and types for Parquet file schema
-        List<SchemaField> schemaFields = new ArrayList<>();
-        while (rs.next()) {
-            String columnName = rs.getString("column_name");
-            String dataType = rs.getString("data_type");
-            schemaFields.add(new SchemaField(columnName, TypeConverter.getSchema().getDataType(dataType)));
-        }
-        
-        // Create Parquet file schema using identified column names and types
-        Schema schema = new Schema(schemaReporter.toSchema(schemaFields));
-        
-        // Write query results to Parquet file
-        String parquetFile = "/path/to/parquet/file";
-        FileWriter writer = new FileWriter(parquetFile);
-        try (ParquetWriter writer = new ParquetWriter(writer, schema, true)) {
-            while (rs.next()) {
-                Object[] row = new Object[schemaFields.size()];
-                for (int i = 0; i < schemaFields.size(); i++) {
-                    row[i] = rs.getObject(i + 1);
-                }
-                writer.writeRow(row);
-            }
-        }
-        
-        // Write Parquet file to S3 bucket location using AWS SDK
-        BasicAWSCredentials awsCreds = new BasicAWSCredentials("ACCESS_KEY", "SECRET_KEY");
-        AmazonS3 s3Client = AmazonS3ClientBuilder.defaultClient()
-                .withCredentials(new AWSStaticCredentialsProvider(awsCreds));
-        
-        PutObjectRequest putObjectRequest = new PutObjectRequest("/path/to/s3/bucket/folder", "/parquet/file.parquet", parquetFile);
-        s3Client.putObject(putObjectRequest);
-    }
-    
+# Create a security group allowing inbound traffic on port 80
+resource "aws_security_group" "web" {
+  name        = "web_sg"
+  description = "Allow inbound traffic on port 80"
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Launch an EC2 instance
+resource "aws_instance" "example" {
+  ami                    = "ami-0c55b159cbfafe1f0" # Specify your desired AMI ID
+  instance_type          = "t2.micro"              # Specify your desired instance type
+  security_groups        = [aws_security_group.web.name]
+  associate_public_ip_address = true
+  
+  tags = {
+    Name = "example-instance" # Specify tags for your instance
+  }
+}
+
+# Create a target group
+resource "aws_lb_target_group" "example" {
+  name     = "example-target-group"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.default.id
+}
+
+# Add EC2 instance to the target group
+resource "aws_lb_target_group_attachment" "example" {
+  target_group_arn = aws_lb_target_group.example.arn
+  target_id        = aws_instance.example.id
+  port             = 80
+}
+
+# Create an Application Load Balancer
+resource "aws_lb" "example" {
+  name               = "example-alb"
+  internal           = false
+  load_balancer_type = "application"
+  
+  security_groups = [aws_security_group.web.id]
+  
+  subnets = ["subnet-12345678", "subnet-87654321"] # Specify your subnets
+  
+  enable_deletion_protection = false
+
+  tags = {
+    Name = "example-alb"
+  }
+}
+
+# Create Route53 record
+resource "aws_route53_record" "example" {
+  zone_id = "YOUR_ZONE_ID"
+  name    = "hello.com"
+  type    = "A"
+  alias {
+    name                   = aws_lb.example.dns_name
+    zone_id                = aws_lb.example.zone_id
+    evaluate_target_health = true
+  }
 }
